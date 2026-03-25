@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vk-calls-tunnel"
+version = "0.1.0"
+description = "Data tunnel through VK voice calls — encode data into Opus audio frames, transmit via VK WebRTC media servers"
+requires-python = ">=3.11"
+dependencies = [
+    "aiortc>=1.9.0",
+    "aiohttp>=3.9.0",
+    "vk-api>=11.9.0",
+    "numpy>=1.26.0",
+    "reedsolo>=1.7.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "structlog>=23.2.0",
+    "playwright>=1.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.scripts]
+vk-tunnel = "vk_tunnel.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vk_tunnel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

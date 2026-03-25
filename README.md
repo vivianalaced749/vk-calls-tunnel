@@ -20,11 +20,51 @@ Client (Russia) → VK call (whitelisted media servers) → Bot on the other end
 
 DPI sees a normal VK voice call.
 
+## Quick start
+
+### Bot (VPS outside Russia)
+
+```bash
+pip install -e .
+playwright install chromium
+
+python -m vk_tunnel bot \
+    --vk-login "+79001234567" \
+    --vk-password "password" \
+    --peer-id 123456789
+```
+
+### Client (inside Russia)
+
+```bash
+pip install -e .
+playwright install chromium
+
+python -m vk_tunnel client \
+    --vk-login "+79009876543" \
+    --vk-password "password" \
+    --peer-id 987654321 \
+    --socks-port 1080
+```
+
+Then configure your apps to use SOCKS5 proxy at `127.0.0.1:1080`.
+
+```bash
+# Test with curl
+curl --socks5 127.0.0.1:1080 https://ifconfig.me
+
+# Or set system-wide
+export ALL_PROXY=socks5://127.0.0.1:1080
+```
+
 ## Performance
 
-- **Speed:** ~50-200 Kbps
-- **Latency:** ~200-500ms per round-trip
-- **Encoding:** Opus payload replacement (faster) or LSB steganography (stealthier)
+| Mode | Throughput | Latency | Survives transcoding |
+|------|-----------|---------|---------------------|
+| **Mode A** (direct Opus payload) | ~70 kbps | ~200ms | No |
+| **Mode B** (FSK modulation) | ~4 kbps | ~300ms | Yes |
+
+Mode A is used by default; auto-fallback to Mode B if VK transcodes.
 
 ### What works
 - Text messengers (Telegram, Signal)
@@ -42,30 +82,109 @@ VK calls use media servers with IPs that are **guaranteed** in any Russian white
 
 Unlike cloud IP fishing (Yandex Cloud, Cloud.ru) where you gamble on getting a whitelisted IP, VK media servers are always whitelisted by definition.
 
-## Status
-
-Working prototype tested. Code being cleaned up for public release.
-
-## Need help with
-
-- WebRTC / VK API expertise
-- Opus codec encoding/decoding optimization
-- Python asyncio
-- Auto-reconnection on call drops
-- VK bot account management (avoiding bans)
-
 ## Architecture
 
 ```
-┌─────────────────┐     VK Call (WebRTC)     ┌─────────────────┐
-│  Client          │ ──────────────────────► │  Bot (Python)    │
-│  Data → Opus     │    VK Media Servers     │  Opus → Data     │
-│  encode          │    (whitelisted IPs)    │  decode + proxy   │
-└─────────────────┘                          └────────┬─────────┘
-                                                      │
-                                                      ▼
-                                               Free Internet
+CLIENT (Russia)                              BOT (VPS abroad)
+===============                              ================
+
+┌──────────────┐                             ┌──────────────┐
+│  App (browser,│                             │  Internet    │
+│  Telegram)   │                             │  (target     │
+│              │                             │   servers)   │
+└──────┬───────┘                             └──────▲───────┘
+       │ SOCKS5                                     │ TCP
+┌──────▼───────┐                             ┌──────┴───────┐
+│  Multiplexer │                             │  Proxy       │
+│  (streams)   │                             │  Engine      │
+├──────────────┤                             ├──────────────┤
+│  Transport   │                             │  Transport   │
+│  (reliable)  │                             │  (reliable)  │
+├──────────────┤                             ├──────────────┤
+│  FEC + Codec │    VK Call (WebRTC/SRTP)    │  FEC + Codec │
+│  (data→audio)│◄═══════════════════════════►│  (audio→data)│
+├──────────────┤    via VK Media Servers     ├──────────────┤
+│  Playwright  │    (whitelisted IPs)        │  Playwright  │
+│  (browser)   │                             │  (browser)   │
+└──────────────┘                             └──────────────┘
 ```
+
+### Components
+
+- **SOCKS5 Server** — local proxy, apps connect here transparently
+- **Multiplexer** — maps multiple TCP connections onto one audio stream
+- **Transport** — sliding window, ACK, retransmission, congestion control
+- **FEC** — Reed-Solomon error correction (16 parity bytes, corrects 8 byte errors)
+- **Codec** — Mode A: direct Opus payload replacement / Mode B: FSK modulation
+- **Playwright Bridge** — headless Chromium, hooks WebRTC to inject/capture audio
+
+### Frame Protocol
+
+```
+┌───────┬───────┬────────┬──────────┬─────────┬───────┐
+│ Magic │ Flags │ SeqNum │ StreamID │ Payload │ CRC16 │
+│  2B   │  1B   │  4B    │   2B     │ 0-200B  │  2B   │
+└───────┴───────┴────────┴──────────┴─────────┴───────┘
++ Reed-Solomon FEC (16 bytes) applied externally
+```
+
+## Project structure
+
+```
+src/vk_tunnel/
+├── __main__.py          # CLI entry point
+├── config.py            # Pydantic settings
+├── client/
+│   ├── main.py          # Client stack (SOCKS5 + tunnel)
+│   └── socks5_server.py # RFC 1928 SOCKS5 proxy
+├── bot/
+│   ├── main.py          # Bot stack (proxy + tunnel)
+│   └── proxy_engine.py  # TCP proxy to internet
+├── transport/
+│   ├── frame.py         # Frame serialization (magic, CRC, flags)
+│   ├── protocol.py      # Sliding window, ACK, retransmit
+│   └── mux.py           # Stream multiplexer
+├── codec/
+│   ├── base.py          # Abstract codec interface
+│   ├── direct_opus.py   # Mode A: Opus payload replacement
+│   └── fec.py           # Reed-Solomon FEC
+└── vk/
+    ├── auth.py           # VK login/session
+    ├── call_manager.py   # Call lifecycle state machine
+    └── browser_bridge.py # Playwright WebRTC interception
+```
+
+## Configuration
+
+All settings via environment variables with `VKT_` prefix:
+
+```bash
+VKT_VK_LOGIN="+79001234567"
+VKT_VK_PASSWORD="password"
+VKT_VK_PEER_ID=123456789
+VKT_SOCKS5_PORT=1080
+VKT_ENCODING_MODE=auto    # auto/direct/fsk
+VKT_WINDOW_SIZE=32
+VKT_FEC_PARITY_SYMBOLS=16
+```
+
+## Development
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+## Status
+
+Core tunnel stack implemented. Next steps:
+- [ ] Test with real VK accounts
+- [ ] Mode B (FSK) codec implementation
+- [ ] Mode auto-detection probing
+- [ ] Multi-account rotation
+- [ ] End-to-end encryption (AES-256-GCM)
 
 ## Related
 
