@@ -1,195 +1,165 @@
 # VK Calls Tunnel
 
-Data tunnel through VK voice calls. Encodes data into Opus audio frames, transmits via VK's WebRTC media servers.
+WireGuard VPN tunnel through VK voice call infrastructure. Routes encrypted VPN traffic via VK's TURN servers — their IPs are guaranteed whitelisted in Russia.
 
-VK media server IPs are guaranteed whitelisted — making this one of the most resilient methods to bypass IP whitelists in Russia.
+DPI sees standard DTLS/STUN traffic to VK media servers. Indistinguishable from a real VK call.
 
 ## How it works
 
 ```
-Client (Russia) → VK call (whitelisted media servers) → Bot on the other end → Decode → Internet
+WireGuard Client (Russia)
+  → vk-tunnel-client (127.0.0.1:9000)
+  → DTLS 1.2 encrypt
+  → STUN ChannelData wrap
+  → VK TURN server (whitelisted IP)
+  → relay to VPS
+  → vk-tunnel-server
+  → DTLS decrypt
+  → WireGuard server (127.0.0.1:51820)
+  → Internet
 ```
 
-1. Bot (Python) holds a VK account, waits for incoming calls
-2. Client initiates VK voice call to the bot
-3. WebRTC connection established through VK media servers
-4. Client encodes data into Opus audio frames (48kHz) and sends as audio stream
-5. Bot receives audio, decodes data, proxies requests to the internet
-6. Response encoded back into audio, sent to client
-7. Client decodes — data received
-
-DPI sees a normal VK voice call.
-
-## Quick start
-
-### Bot (VPS outside Russia)
-
-```bash
-pip install -e .
-playwright install chromium
-
-python -m vk_tunnel bot \
-    --vk-login "+79001234567" \
-    --vk-password "password" \
-    --peer-id 123456789
-```
-
-### Client (inside Russia)
-
-```bash
-pip install -e .
-playwright install chromium
-
-python -m vk_tunnel client \
-    --vk-login "+79009876543" \
-    --vk-password "password" \
-    --peer-id 987654321 \
-    --socks-port 1080
-```
-
-Then configure your apps to use SOCKS5 proxy at `127.0.0.1:1080`.
-
-```bash
-# Test with curl
-curl --socks5 127.0.0.1:1080 https://ifconfig.me
-
-# Or set system-wide
-export ALL_PROXY=socks5://127.0.0.1:1080
-```
+No audio encoding, no Opus, no steganography. VK's TURN servers are dumb relays — they forward bytes without inspecting content. We just need valid TURN credentials from a VK call link.
 
 ## Performance
 
-| Mode | Throughput | Latency | Survives transcoding |
-|------|-----------|---------|---------------------|
-| **Mode A** (direct Opus payload) | ~70 kbps | ~200ms | No |
-| **Mode B** (FSK modulation) | ~4 kbps | ~300ms | Yes |
+- **Speed:** ~5 Mbps per stream, scale with `-n` flag (4 streams ≈ 20 Mbps)
+- **Latency:** ~80ms
+- **Enough for:** browsing, messengers, video calls, streaming
 
-Mode A is used by default; auto-fallback to Mode B if VK transcodes.
+## Quick start
 
-### What works
-- Text messengers (Telegram, Signal)
-- Email
-- Web pages (slow)
+### 1. Server (VPS outside Russia)
 
-### What doesn't
-- Video streaming
-- Normal browsing speed
-- Large downloads
+```bash
+# Install WireGuard
+apt install wireguard
 
-## Why this is resilient
+# Configure WireGuard (standard setup)
+wg genkey | tee /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
 
-VK calls use media servers with IPs that are **guaranteed** in any Russian whitelist. Blocking them = disabling VK calls for the entire country. RKN won't do that.
+# Run tunnel server
+./vk-tunnel-server -listen 0.0.0.0:56000 -connect 127.0.0.1:51820
+```
 
-Unlike cloud IP fishing (Yandex Cloud, Cloud.ru) where you gamble on getting a whitelisted IP, VK media servers are always whitelisted by definition.
+### 2. Client (inside Russia)
+
+```bash
+# Create a VK call link: open vk.com → Calls → Create link
+# Or have someone send you one
+
+# Run tunnel client
+./vk-tunnel-client \
+    -peer YOUR_VPS_IP:56000 \
+    -vk-link "https://vk.com/call/join/abc123def" \
+    -n 4 \
+    -listen 127.0.0.1:9000
+```
+
+### 3. WireGuard config
+
+```ini
+[Interface]
+PrivateKey = <client-private-key>
+Address = 10.0.0.2/32
+MTU = 1280  # reduced for DTLS/TURN overhead
+
+[Peer]
+PublicKey = <server-public-key>
+Endpoint = 127.0.0.1:9000  # points to vk-tunnel-client, NOT to VPS directly
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+```
+
+## Build
+
+```bash
+go build -o vk-tunnel-client ./cmd/client/
+go build -o vk-tunnel-server ./cmd/server/
+```
+
+## Client flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-peer` | (required) | Server address (ip:port) |
+| `-vk-link` | | VK call link for TURN credentials |
+| `-turn` | | Manual TURN server address |
+| `-turn-user` | | TURN username (manual mode) |
+| `-turn-pass` | | TURN password (manual mode) |
+| `-listen` | `127.0.0.1:9000` | Local WireGuard endpoint |
+| `-n` | `1` | Parallel DTLS streams (~5 Mbps each) |
+| `-tcp` | `true` | TCP transport to TURN server |
+| `-psk` | | Pre-shared key (hex) for DTLS auth |
+| `-session-id` | (auto) | Fixed session UUID (32-char hex) |
+| `-no-dtls` | `false` | Disable DTLS (not recommended) |
+
+## Server flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-listen` | `0.0.0.0:56000` | Listen address for tunnel clients |
+| `-connect` | `127.0.0.1:51820` | WireGuard backend |
+| `-psk` | | Pre-shared key (hex) |
+| `-no-dtls` | `false` | Disable DTLS |
 
 ## Architecture
 
 ```
-CLIENT (Russia)                              BOT (VPS abroad)
-===============                              ================
+CLIENT (Russia)                         SERVER (VPS abroad)
+===============                         ===================
 
-┌──────────────┐                             ┌──────────────┐
-│  App (browser,│                             │  Internet    │
-│  Telegram)   │                             │  (target     │
-│              │                             │   servers)   │
-└──────┬───────┘                             └──────▲───────┘
-       │ SOCKS5                                     │ TCP
-┌──────▼───────┐                             ┌──────┴───────┐
-│  Multiplexer │                             │  Proxy       │
-│  (streams)   │                             │  Engine      │
-├──────────────┤                             ├──────────────┤
-│  Transport   │                             │  Transport   │
-│  (reliable)  │                             │  (reliable)  │
-├──────────────┤                             ├──────────────┤
-│  FEC + Codec │    VK Call (WebRTC/SRTP)    │  FEC + Codec │
-│  (data→audio)│◄═══════════════════════════►│  (audio→data)│
-├──────────────┤    via VK Media Servers     ├──────────────┤
-│  Playwright  │    (whitelisted IPs)        │  Playwright  │
-│  (browser)   │                             │  (browser)   │
-└──────────────┘                             └──────────────┘
+┌─────────────┐                         ┌──────────────┐
+│  WireGuard   │                         │  WireGuard    │
+│  Client      │                         │  Server       │
+└──────┬───────┘                         └──────▲───────┘
+       │ UDP :9000                              │ UDP :51820
+┌──────▼───────┐                         ┌──────┴───────┐
+│  vk-tunnel   │                         │  vk-tunnel   │
+│  client      │                         │  server      │
+├──────────────┤                         ├──────────────┤
+│  Session UUID│                         │  Session Mgr │
+│  + DTLS 1.2  │    VK TURN Servers     │  + DTLS 1.2  │
+│  + STUN      │◄══════════════════════►│              │
+│  ChannelData │   (whitelisted IPs)    │              │
+└──────────────┘                         └──────────────┘
 ```
 
-### Components
+### Multi-stream
 
-- **SOCKS5 Server** — local proxy, apps connect here transparently
-- **Multiplexer** — maps multiple TCP connections onto one audio stream
-- **Transport** — sliding window, ACK, retransmission, congestion control
-- **FEC** — Reed-Solomon error correction (16 parity bytes, corrects 8 byte errors)
-- **Codec** — Mode A: direct Opus payload replacement / Mode B: FSK modulation
-- **Playwright Bridge** — headless Chromium, hooks WebRTC to inject/capture audio
+Each TURN stream gives ~5 Mbps. Use `-n 4` for ~20 Mbps. Streams are load-balanced round-robin. If one dies, traffic shifts to remaining streams.
 
-### Frame Protocol
+### Session management
 
-```
-┌───────┬───────┬────────┬──────────┬─────────┬───────┐
-│ Magic │ Flags │ SeqNum │ StreamID │ Payload │ CRC16 │
-│  2B   │  1B   │  4B    │   2B     │ 0-200B  │  2B   │
-└───────┴───────┴────────┴──────────┴─────────┴───────┘
-+ Reed-Solomon FEC (16 bytes) applied externally
-```
+- Each client generates a 16-byte UUID
+- Server maps UUID → WireGuard connection (prevents endpoint thrashing)
+- Multiple streams per session, identified by UUID
+- Reconnect-safe: same `-session-id` resumes the session
 
-## Project structure
+## Why VK TURN servers?
 
-```
-src/vk_tunnel/
-├── __main__.py          # CLI entry point
-├── config.py            # Pydantic settings
-├── client/
-│   ├── main.py          # Client stack (SOCKS5 + tunnel)
-│   └── socks5_server.py # RFC 1928 SOCKS5 proxy
-├── bot/
-│   ├── main.py          # Bot stack (proxy + tunnel)
-│   └── proxy_engine.py  # TCP proxy to internet
-├── transport/
-│   ├── frame.py         # Frame serialization (magic, CRC, flags)
-│   ├── protocol.py      # Sliding window, ACK, retransmit
-│   └── mux.py           # Stream multiplexer
-├── codec/
-│   ├── base.py          # Abstract codec interface
-│   ├── direct_opus.py   # Mode A: Opus payload replacement
-│   └── fec.py           # Reed-Solomon FEC
-└── vk/
-    ├── auth.py           # VK login/session
-    ├── call_manager.py   # Call lifecycle state machine
-    └── browser_bridge.py # Playwright WebRTC interception
-```
+VK Calls uses TURN servers for NAT traversal in voice/video calls. These IPs are in every Russian ISP whitelist — blocking them would break VK calls nationwide. RKN won't do that.
 
-## Configuration
+Unlike cloud IP fishing (Yandex Cloud, Cloud.ru), VK media server IPs are **guaranteed whitelisted by definition**.
 
-All settings via environment variables with `VKT_` prefix:
+## Security
 
-```bash
-VKT_VK_LOGIN="+79001234567"
-VKT_VK_PASSWORD="password"
-VKT_VK_PEER_ID=123456789
-VKT_SOCKS5_PORT=1080
-VKT_ENCODING_MODE=auto    # auto/direct/fsk
-VKT_WINDOW_SIZE=32
-VKT_FEC_PARITY_SYMBOLS=16
-```
+- WireGuard provides end-to-end encryption (ChaCha20-Poly1305)
+- DTLS 1.2 encrypts tunnel traffic (makes it look like a real call)
+- Optional PSK for DTLS authentication
+- VK TURN credentials are temporary and session-scoped
 
-## Development
+## Limitations
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-pytest
-```
-
-## Status
-
-Core tunnel stack implemented. Next steps:
-- [ ] Test with real VK accounts
-- [ ] Mode B (FSK) codec implementation
-- [ ] Mode auto-detection probing
-- [ ] Multi-account rotation
-- [ ] End-to-end encryption (AES-256-GCM)
+- VK call links expire — need periodic refresh
+- ~5 Mbps per stream cap (VK rate limiting)
+- Using `-no-dtls` may trigger TURN provider bans
+- TURN credentials require a valid VK call link
 
 ## Related
 
-- [vpn-gcloud](https://github.com/kobzevvv/vpn-gcloud) — VLESS+Reality deployment, whitelist architecture
-- [Xray-core](https://github.com/XTLS/Xray-core) — VLESS+Reality protocol
+- [vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy) — original Go implementation of TURN tunneling
+- [vpn-gcloud](https://github.com/kobzevvv/vpn-gcloud) — VLESS+Reality deployment
 - [ntc.party](https://ntc.party) — Censorship bypass community
 
 ## Author

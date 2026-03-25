@@ -1,15 +1,22 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
+# Binaries
+vk-tunnel-client
+vk-tunnel-server
+*.exe
+
+# Go
+vendor/
+
+# Python (legacy)
 .venv/
-venv/
+__pycache__/
+*.pyc
 .pytest_cache/
-.coverage
-htmlcov/
-*.so
-.vk-tunnel-session.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
