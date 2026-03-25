@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/hex"
 	"log"
 	"net"
 	"sync"
@@ -15,6 +16,12 @@ type Session struct {
 	wgConn  *net.UDPConn
 	rrIndex atomic.Uint64
 	closed  chan struct{}
+
+	// Raw UDP return path (used in no-DTLS mode)
+	udpConn    *net.UDPConn
+	udpClients []net.Addr
+	udpMu      sync.RWMutex
+	udpRR      atomic.Uint64
 }
 
 // NewSession creates a tunnel session with a dedicated WireGuard connection.
@@ -45,6 +52,21 @@ func (s *Session) AddStream(conn net.Conn) {
 	log.Printf("[%s] +stream (total: %d)", s.ID[:8], count)
 }
 
+// SetUDPReturn sets the UDP socket and client address for raw UDP responses.
+func (s *Session) SetUDPReturn(conn *net.UDPConn, clientAddr net.Addr) {
+	s.udpMu.Lock()
+	s.udpConn = conn
+	// Check if this client address is already known
+	for _, a := range s.udpClients {
+		if a.String() == clientAddr.String() {
+			s.udpMu.Unlock()
+			return
+		}
+	}
+	s.udpClients = append(s.udpClients, clientAddr)
+	s.udpMu.Unlock()
+}
+
 // HandlePacket processes a WireGuard packet received from the client.
 func (s *Session) HandlePacket(data []byte) {
 	if _, err := s.wgConn.Write(data); err != nil {
@@ -52,21 +74,44 @@ func (s *Session) HandlePacket(data []byte) {
 	}
 }
 
-// sendToClient distributes data across streams round-robin.
+// sendToClient distributes data across streams (DTLS) or UDP clients round-robin.
 func (s *Session) sendToClient(data []byte) {
+	// Try DTLS streams first
 	s.mu.RLock()
 	n := len(s.streams)
-	if n == 0 {
+	if n > 0 {
+		idx := s.rrIndex.Add(1) % uint64(n)
+		conn := s.streams[idx]
 		s.mu.RUnlock()
+
+		if _, err := conn.Write(data); err != nil {
+			log.Printf("[%s] stream write: %v", s.ID[:8], err)
+			s.removeStream(conn)
+		}
 		return
 	}
-	idx := s.rrIndex.Add(1) % uint64(n)
-	conn := s.streams[idx]
 	s.mu.RUnlock()
 
-	if _, err := conn.Write(data); err != nil {
-		log.Printf("[%s] stream write: %v", s.ID[:8], err)
-		s.removeStream(conn)
+	// Fall back to raw UDP
+	s.udpMu.RLock()
+	nc := len(s.udpClients)
+	if nc == 0 || s.udpConn == nil {
+		s.udpMu.RUnlock()
+		return
+	}
+	idx := s.udpRR.Add(1) % uint64(nc)
+	clientAddr := s.udpClients[idx]
+	conn := s.udpConn
+	s.udpMu.RUnlock()
+
+	// Prepend session UUID so client can identify responses
+	sid, _ := hex.DecodeString(s.ID)
+	packet := make([]byte, 16+len(data))
+	copy(packet[:16], sid)
+	copy(packet[16:], data)
+
+	if _, err := conn.WriteTo(packet, clientAddr); err != nil {
+		log.Printf("[%s] udp write to %s: %v", s.ID[:8], clientAddr, err)
 	}
 }
 

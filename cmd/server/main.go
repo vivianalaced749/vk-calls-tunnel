@@ -129,9 +129,7 @@ func runRawUDP(addr string, mgr *session.Manager) {
 			continue
 		}
 
-		// For raw UDP, we need to track the remote address to send responses back
-		// This is handled differently — the session manager sends back via the same conn
-		_ = remoteAddr
+		sess.SetUDPReturn(conn, remoteAddr)
 		sess.HandlePacket(payload)
 	}
 }
