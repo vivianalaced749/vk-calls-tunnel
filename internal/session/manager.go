@@ -88,9 +88,11 @@ func (s *Session) readFromStream(conn net.Conn) {
 			continue
 		}
 
-		// Data from client: first 16 bytes are session UUID (already consumed for DTLS mode),
-		// rest is WireGuard packet
-		s.HandlePacket(buf[:n])
+		// Every packet from client has 16-byte session UUID prefix — strip it
+		if n <= 16 {
+			continue
+		}
+		s.HandlePacket(buf[16:n])
 	}
 }
 
